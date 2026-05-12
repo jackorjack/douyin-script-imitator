@@ -8,8 +8,9 @@ metadata:
       - python3
       - curl
     params:
-      - groqApiKey       # Groq API密钥（必填），也可通过环境变量 GROQ_API_KEY 或对话中提供
-      - feishuWikiUrl    # 飞书知识库链接（可选），也可通过环境变量 FEISHU_WIKI_URL 或对话中提供
+      - groqApiKey          # Groq API密钥（可选），也可通过环境变量 GROQ_API_KEY 或对话中提供
+      - siliconflowApiKey   # 硅基流动 API密钥（可选，国内直连），也可通过环境变量 SILICONFLOW_API_KEY 或对话中提供
+      - feishuWikiUrl       # 飞书知识库链接（可选），也可通过环境变量 FEISHU_WIKI_URL 或对话中提供
 ---
 
 # 抖音短视频脚本仿写
@@ -29,8 +30,11 @@ metadata:
 
 | 参数 | 用途 | 获取方式 |
 |------|------|----------|
-| groqApiKey | Groq Whisper API 语音转写 | https://console.groq.com 注册获取 |
+| groqApiKey | Groq Whisper API 语音转写（需翻墙） | https://console.groq.com 注册获取 |
+| siliconflowApiKey | 硅基流动 API 语音转写（国内直连） | https://cloud.siliconflow.cn 注册获取 |
 | feishuWikiUrl | 飞书知识库链接（可选） | 飞书知识库页面URL |
+
+> 💡 **语音转写 API 回退策略：** 硅基流动优先。GROQ_API_KEY 配置找不到或请求失败时，自动使用 SILICONFLOW_API_KEY。两者至少配置一个即可。
 
 **获取优先级（从高到低）：**
 
@@ -56,10 +60,13 @@ metadata:
   "id": "your-agent-id",
   "params": {
     "groqApiKey": "gsk_xxxxxxxxxxxx",
+    "siliconflowApiKey": "sk-xxxxxxxxxxxx",
     "feishuWikiUrl": "https://xxx.feishu.cn/wiki/xxxxxx"
   }
 }
 ```
+
+> 💡 groqApiKey 和 siliconflowApiKey 至少配置一个。推荐国内用户优先配 siliconflowApiKey（国内直连，无需翻墙）。
 
 > 💡 **多智能体共用：** 每个智能体各自配自己的 params，技能自动读取当前运行智能体的配置。同一个技能可以在 QClaw、Claude Code、Hermes 等任何智能体上使用，互不干扰。
 
@@ -67,11 +74,13 @@ metadata:
 
 ```bash
 # macOS/Linux: 写入 ~/.zshrc 或 ~/.bashrc
-export GROQ_API_KEY="gsk_xxxxxxxxxxxx"
+export GROQ_API_KEY="gsk_xxxxxxxxxxxx"             # 可选，需翻墙
+export SILICONFLOW_API_KEY="sk-xxxxxxxxxxxx"      # 推荐，国内直连
 export FEISHU_WIKI_URL="https://xxx.feishu.cn/wiki/xxxxxx"
 
 # Windows: 写入系统环境变量或 PowerShell 配置文件
-$env:GROQ_API_KEY = "gsk_xxxxxxxxxxxx"
+$env:GROQ_API_KEY = "gsk_xxxxxxxxxxxx"             # 可选，需翻墙
+$env:SILICONFLOW_API_KEY = "sk-xxxxxxxxxxxx"      # 推荐，国内直连
 $env:FEISHU_WIKI_URL = "https://xxx.feishu.cn/wiki/xxxxxx"
 ```
 
@@ -190,30 +199,37 @@ curl -L -o /tmp/douyin_video.mp4 "<视频下载地址>" -H "User-Agent: Mozilla/
 ffmpeg -y -i /tmp/douyin_video.mp4 -acodec pcm_s16le -ar 16000 -ac 1 /tmp/douyin_audio.wav 2>/dev/null
 ```
 
-#### 2c. Groq Whisper API 转写
+#### 2c. 语音转写 API
 
-使用本技能内置的转写脚本，调用 Groq Whisper large-v3 模型进行语音转文字。
+使用本技能内置的转写脚本，自动按优先级选择可用的 API 进行语音转文字。
+
+**API 回退策略（自动选择）：**
+
+| 优先级 | API | 模型 | 网络要求 | 特点 |
+|--------|-----|------|----------|------|
+| 🥇 优先 | 硅基流动 | FunAudioLLM/SenseVoiceSmall | 国内直连 | 中文识别强，无需翻墙 |
+| 🥈 回退 | Groq | whisper-large-v3 | 需翻墙 | 速度快，1分钟音频<2秒 |
 
 **API Key 获取方式（三层回退）：**
 1. 用户对话中直接提供了 key → 直接使用
-2. 智能体 params 中配置了 `groqApiKey` → 读取 params
-3. 系统环境变量 `GROQ_API_KEY` → 读取环境变量
+2. 智能体 params 中配置了 `groqApiKey` / `siliconflowApiKey` → 读取 params
+3. 系统环境变量 `GROQ_API_KEY` / `SILICONFLOW_API_KEY` → 读取环境变量
 
 ```bash
-GROQ_API_KEY="<按上述优先级获取>" python3 scripts/transcribe.py /tmp/douyin_audio.wav
+# 只配一个即可，脚本自动选择
+GROQ_API_KEY="gsk_xxx" SILICONFLOW_API_KEY="sk-xxx" python3 scripts/transcribe.py /tmp/douyin_audio.wav
 ```
 
-> 💡 三层回退设计确保技能在任何智能体（QClaw / Claude Code / Hermes 等）上都能运行，无需逐个配环境。
+> 💡 双 API 回退设计：硅基流动优先尝试（国内直连），失败或未配置时自动回退到 Groq。
 
 **输出：** 视频的完整口播文案（纯文本）。
 
 **优势：**
 - 云端转写，无需下载本地模型（省几百MB空间）
-- whisper-large-v3 模型，中文识别准确率高
-- 秒级响应，1分钟以内音频通常 <2秒 出结果
+- 双 API 回退，国内外均可使用
 - 自动处理音频格式（ffmpeg 可选）
 
-**注意：** 如果转写失败或音频为纯音乐无语音，则回退到从页面字幕/描述中提取文案。
+**注意：** 如果两个 API 都失败或音频为纯音乐无语音，则回退到从页面字幕/描述中提取文案。
 
 #### 2d. 画面内容分析
 
@@ -309,7 +325,7 @@ GROQ_API_KEY="<按上述优先级获取>" python3 scripts/transcribe.py /tmp/dou
 - **仿写后必须通顺**：替换内容后逐句朗读检查，拗口/生硬/不通顺的必须调整，宁可多一字不可卡一秒
 - **输出格式美观**：使用表格+分段+emoji，清晰易读
 - **口播文案要口语化**：短视频脚本不是写文章，要说人话
-- **口播文案优先语音转写**：通过 Groq Whisper API 获取的口播文案比页面字幕更完整准确
+- **口播文案优先语音转写**：通过语音转写 API（Groq/硅基流动）获取的口播文案比页面字幕更完整准确
 - **只输出不保存**：脚本生成后直接输出到对话，不自动写文件。是否保存、保存路径由用户确认后再操作
 
 ## 文件结构
