@@ -1,7 +1,7 @@
 ---
 name: douyin-script-imitator
 description: 抖音/短视频脚本仿写。用户提供抖音链接+仿写/改写/借鉴/参考等意图时触发。流程：解析链接→音频转写→读飞书知识库→拆解结构→仿写3条脚本。
-version: 1.1.0
+version: 1.2.0
 metadata:
   requires:
     bins: [ffmpeg,lark-wiki]
@@ -27,9 +27,16 @@ metadata:
 提取：标题、作品描述、标签、内容形式、高频关键词、评论热点词、账号信息（昵称/粉丝/获赞/类型）、点赞/评论/收藏量。
 
 **操作（按优先级）：**
-1. **浏览器（首选）：** 抖音是纯JS渲染SPA，浏览器是唯一稳定方案。`browser`打开链接→`snapshot`提取信息→`screenshot`截取画面用于第2d步
-2. **web_fetch（备选）：** 通常只能拿空壳，效果有限
-3. 短链接（`v.douyin.com/xxx`）浏览器会自动跳转
+1. **OpenClaw browser（首选）：** 抖音是纯JS渲染SPA，浏览器是唯一稳定方案。`browser`打开链接→`snapshot`提取信息→`screenshot`截取画面用于第2d步→`act evaluate`提取`<video>.currentSrc`获取视频源地址
+2. **Playwright Stealth 脚本（备选）：** 当OpenClaw browser超时或不稳定时，使用`scripts/fetch_video_detail.js`（需在douyin-search目录下运行以复用node_modules）
+3. **web_fetch（兜底）：** 通常只能拿空壳，效果有限
+4. 短链接（`v.douyin.com/xxx`）浏览器会自动跳转
+
+**⚠️ 浏览器使用注意事项：**
+- 抖音页面是重SPA，标签页堆积会导致CDP超时。操作前先检查并清理多余标签页（`browser tabs`查看，关闭非必要页面）
+- 每次操作完成后立即关闭标签页，避免残留
+- 如果snapshot/evaluate超时，先清理标签页再重试
+- 视频源地址需用`act evaluate`从`<video>.currentSrc`获取，snapshot中不包含
 
 **标题与作品描述的区分规则：**
 
@@ -52,13 +59,26 @@ metadata:
 
 **核心步骤，优先于页面字幕提取。**
 
-#### 2a. 下载视频
+#### 2a. 获取视频源地址并下载视频
+
+**获取视频源地址：**
+用`browser act evaluate`从页面提取：
+```javascript
+document.querySelector('video')?.currentSrc || document.querySelector('video')?.src || ''
+```
+
+**下载视频：**
 ```bash
 curl -L -o /tmp/douyin_video.mp4 "<视频下载地址>" -H "User-Agent: Mozilla/5.0" -H "Referer: https://www.douyin.com/"
 ```
-失败403时，用`browser act evaluate`从`<video>.currentSrc`获取备用地址。
 
-**降级方案：** 无法下载→从snapshot页面文字/用户分享文本提取文案，或请用户粘贴。
+**降级方案：**
+- curl 403 → 检查视频源URL是否已过期，重新从页面获取
+- OpenClaw browser整体不可用 → 使用Playwright Stealth脚本`scripts/fetch_video_detail.js`获取视频源，需在douyin-search目录下运行：
+  ```bash
+  cd skills/douyin-search && node scripts/fetch_video_detail.js <aweme_id>
+  ```
+  注意：该脚本依赖`playwright-extra`和`puppeteer-extra-plugin-stealth`，仅在douyin-search目录下有node_modules
 
 #### 2b. 提取音频
 ```bash
@@ -70,14 +90,15 @@ ffmpeg -y -i /tmp/douyin_video.mp4 -acodec pcm_s16le -ar 16000 -ac 1 /tmp/douyin
 ```bash
 python3 scripts/transcribe.py $SILICONFLOW_API_KEY /tmp/douyin_audio.wav
 ```
-API失败或纯音乐→回退到页面字幕/描述提取。
+API失败或纯音乐→回退到页面字幕/描述提取。SiliconFlow API偶发500错误，建议重试2-3次（间隔3秒）。
 
 #### 2d. 画面分析
 用`browser screenshot`截取画面，提取画面内容（场景/动作）和画面特点（运镜/景别/转场）。
 
 ### 第3步：读取飞书知识库企业信息
 
-用`lark-wiki`+`lark-doc`读取，提取：公司名/行业/规模、主推业务/卖点、目标客户/痛点、差异化优势、目标市场、内容方向。
+优先读取`../../wiki-monitor/content/`目录下的文件内容,目录下没文件再使用`lark-wiki`+`lark-doc`读取，
+提取：公司名/行业/规模、主推业务/卖点、目标客户/痛点、差异化优势、目标市场、内容方向。
 
 **压缩为≤150字摘要**，用于仿写参考。
 
@@ -110,5 +131,4 @@ API失败或纯音乐→回退到页面字幕/描述提取。
 
 输出格式见`references/output-format.md`
 
-- 内容输出后保存文件
-- 文件保存到`output/{标题}-{YYYYMMDD}.md`
+- 内容输出给用户看后保存文件
