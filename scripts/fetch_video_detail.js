@@ -3,10 +3,15 @@
 // 用法: node fetch_video_detail.js <aweme_id>
 // 输出: JSON { title, desc, tags, videoSrc, authorName, followers, likes, comments, shares, publishDate }
 
+const path = require('path');
+const fs = require('fs');
+
+// 显式指向 xthezealot-stealth-browser 的 node_modules
+const STEALTH_NM = path.join(__dirname, '..', '..', 'xthezealot-stealth-browser', 'node_modules');
+module.paths.unshift(STEALTH_NM);
+
 const { chromium } = require('playwright-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const fs = require('fs');
-const path = require('path');
 chromium.use(StealthPlugin());
 
 const AWEME_ID = process.argv[2];
